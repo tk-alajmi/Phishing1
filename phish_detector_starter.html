@@ -1,0 +1,408 @@
+<!--
+Phish-Detector-Starter.html
+Single-file HTML starter for a professional, modern phishing email detector dashboard
+Drop this file into a GitHub repo (as README.html or index.html) and open in a browser.
+
+Features included:
+- Sample email dataset (mocked) and ingestion simulator
+- Lightweight feature extraction (header checks, URL heuristics, attachment flags)
+- Simple scoring ensemble (rule flags + heuristic ML-style score)
+- Explainability panel showing per-email "reasons" and weighted impacts
+- Export selected email evidence as JSON for analysts
+- Responsive modern UI using simple CSS (Tailwind-like feel without external libs)
+
+How to use:
+1. Save this file, open in browser. No server required.
+2. Replace mock dataset with your real API output or EML parser results.
+3. Hook up to backend by replacing `fetchEmails()` with your API call.
+4. Use the `exportEvidence(emailId)` to get an evidence JSON you can POST to your backend.
+
+Notes / Next steps:
+- This is client-side only for demonstration. For production, move parsing, scoring, and storage server-side.
+- Integrate real SPF/DKIM checks, WHOIS, and transformer models in backend services.
+
+-->
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Phishing Email Detector — Starter Dashboard</title>
+  <style>
+    /* Minimal modern styling */
+    :root{--bg:#0f1724;--card:#0b1220;--muted:#94a3b8;--accent:#7c3aed;--good:#10b981;--bad:#ef4444}
+    *{box-sizing:border-box;font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,'Helvetica Neue',Arial}
+    body{margin:0;background:linear-gradient(180deg,#071029 0%, #071425 100%);color:#e6eef8}
+    header{padding:20px 28px;display:flex;align-items:center;gap:16px}
+    .brand{display:flex;align-items:center;gap:12px}
+    .logo{width:44px;height:44px;border-radius:10px;background:linear-gradient(135deg,var(--accent),#06b6d4);display:flex;align-items:center;justify-content:center;font-weight:700}
+    h1{font-size:18px;margin:0}
+    p.lead{margin:0;color:var(--muted);font-size:13px}
+    main{display:grid;grid-template-columns:360px 1fr;gap:20px;padding:18px}
+    .card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border:1px solid rgba(255,255,255,0.03);border-radius:12px;padding:14px}
+    .left{height:calc(100vh - 120px);overflow:auto}
+    .right{height:calc(100vh - 120px);overflow:auto}
+    .search{display:flex;gap:8px;margin-bottom:12px}
+    input.searchbox{flex:1;padding:10px;border-radius:8px;background:transparent;border:1px solid rgba(255,255,255,0.04);color:inherit}
+    button{background:var(--accent);border:none;padding:10px 12px;border-radius:8px;color:#fff;cursor:pointer}
+    .email-row{display:flex;gap:8px;padding:10px;border-radius:8px;align-items:center;border:1px solid transparent}
+    .email-row:hover{background:rgba(255,255,255,0.02)}
+    .sender{font-weight:600}
+    .subject{color:var(--muted);font-size:13px}
+    .score-bubble{min-width:56px;padding:8px 10px;border-radius:999px;text-align:center;font-weight:700}
+    .filters{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+    .small{font-size:12px;color:var(--muted)}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:10px;text-align:left;border-bottom:1px dashed rgba(255,255,255,0.03)}
+    .evidence{background:rgba(255,255,255,0.02);padding:10px;border-radius:8px}
+    .pill{display:inline-block;padding:6px 10px;border-radius:999px;background:rgba(255,255,255,0.03);font-size:12px}
+    footer{padding:12px 28px;color:var(--muted);font-size:13px}
+    .tag-good{background:rgba(16,185,129,0.12);color:var(--good);padding:6px 8px;border-radius:8px}
+    .tag-bad{background:rgba(239,68,68,0.12);color:var(--bad);padding:6px 8px;border-radius:8px}
+    .btn-ghost{background:transparent;border:1px solid rgba(255,255,255,0.04);padding:8px 10px;border-radius:8px;color:var(--muted)}
+    .json-output{white-space:pre-wrap;background:#020617;padding:12px;border-radius:8px;border:1px solid rgba(255,255,255,0.03);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+    @media (max-width:900px){main{grid-template-columns:1fr;padding:10px}.left{height:auto}.right{height:auto}}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <div class="logo">PD</div>
+      <div>
+        <h1>Phish Detector — Starter Dashboard</h1>
+        <p class="lead">Client-side prototype: inspect, score, explain, export. Replace data with your backend.</p>
+      </div>
+    </div>
+    <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+      <div class="small">Mode: <span class="pill">Demo (client-only)</span></div>
+      <button id="refreshBtn">Fetch / Refresh</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="left card">
+      <div class="search">
+        <input id="search" class="searchbox" placeholder="Search sender, subject or domain" />
+        <button onclick="applyFilters()">Search</button>
+      </div>
+
+      <div class="filters small">
+        <label><input type="checkbox" id="showQuarantine" onchange="renderList()"> Show only quarantine</label>
+        <label><input type="checkbox" id="showWarnings" onchange="renderList()"> Show only warnings</label>
+        <label style="margin-left:auto"><select id="sortBy" onchange="renderList()"><option value="score_desc">Sort: Score ↓</option><option value="score_asc">Score ↑</option><option value="time_desc">Newest</option></select></label>
+      </div>
+
+      <div id="emailList"></div>
+    </div>
+
+    <div class="right card">
+      <div id="detailsArea">
+        <h3 id="detailTitle">Select an email to inspect</h3>
+        <div id="detailBody" class="small">Click any message on the left to view evidence, score breakdown, and export JSON for analyst workflows.</div>
+      </div>
+
+      <hr style="margin:12px 0;border:none;border-top:1px solid rgba(255,255,255,0.03)">
+
+      <div style="display:grid;grid-template-columns:1fr 360px;gap:12px">
+        <div>
+          <h4>Score & Explanation</h4>
+          <div id="scoreCard" class="card"></div>
+
+          <h4 style="margin-top:12px">Quick Actions</h4>
+          <div style="display:flex;gap:8px">
+            <button class="btn-ghost" onclick="markSafe()">Mark Safe</button>
+            <button class="btn-ghost" onclick="quarantine()">Quarantine</button>
+            <button class="btn-ghost" onclick="exportEvidenceCurrent()">Export Evidence</button>
+          </div>
+        </div>
+        <div>
+          <h4>Raw / Evidence JSON</h4>
+          <div id="jsonOut" class="json-output">No email selected</div>
+        </div>
+      </div>
+
+      <h4 style="margin-top:12px">Recent Activity</h4>
+      <div id="activityLog" class="small" style="max-height:180px;overflow:auto;padding:8px;background:rgba(255,255,255,0.01);border-radius:8px"></div>
+
+    </div>
+  </main>
+
+  <footer>
+    Prototype • Replace client-side logic with server-side services for production. See README in repo for architecture & ML pipeline links.
+  </footer>
+
+  <script>
+    // -------------------- Mock dataset --------------------
+    // Replace this with your fetch to backend that returns parsed MIME with fields shown below.
+    const MOCK_EMAILS = [
+      {
+        id: 'e-001',
+        from: 'support@paypall.com',
+        display_name: 'PayPal Support',
+        to: 'turki@example.com',
+        subject: 'Urgent: Verify your account',
+        date: '2025-09-16T09:12:00Z',
+        headers: {spf: 'pass', dkim: 'fail', dmarc: 'none', received_spf: 'fail', sender_ip: '45.153.200.12'},
+        body_text: 'Please verify your account by clicking the link below.',
+        html: '<p>Please <a href="http://paypall.com/login">click here</a> to verify.</p>',
+        links: ['http://paypall.com/login'],
+        attachments: [],
+        raw: '...eml content...'
+      },
+      {
+        id: 'e-002',
+        from: 'alerts@bankof-aus.com',
+        display_name: 'Bank AU Alerts',
+        to: 'turki@example.com',
+        subject: 'Unusual sign-in attempt',
+        date: '2025-09-15T22:05:00Z',
+        headers: {spf: 'neutral', dkim: 'pass', dmarc: 'pass', sender_ip: '203.0.113.54'},
+        body_text: 'We detected a sign-in from a new device.',
+        html: '<p>We detected a sign-in. <a href="https://bankof-aus.com/security">Review activity</a></p>',
+        links: ['https://bankof-aus.com/security'],
+        attachments: ['statement.pdf'],
+        raw: '...eml content...'
+      },
+      {
+        id: 'e-003',
+        from: 'hr@company.local',
+        display_name: 'HR Department',
+        to: 'turki@example.com',
+        subject: 'Payroll Update',
+        date: '2025-09-14T02:40:00Z',
+        headers: {spf: 'pass', dkim: 'pass', dmarc: 'pass', sender_ip: '198.51.100.101'},
+        body_text: 'Payroll will be processed on Friday. See attached payslip.',
+        html: '<p>See attached payslip.</p>',
+        links: [],
+        attachments: ['payslip.docx'],
+        raw: '...eml content...'
+      }
+    ];
+
+    // -------------------- Basic heuristics & scoring --------------------
+    function urlHeuristics(url){
+      try{
+        const u = new URL(url);
+        const hostname = u.hostname.toLowerCase();
+        const p = {};
+        p.host = hostname;
+        p.isPunycode = hostname.includes('xn--');
+        p.hasHyphen = hostname.includes('-');
+        p.length = hostname.length;
+        p.tld = hostname.split('.').pop();
+        p.suspiciousTLD = ['tk','ml','cf','gq'].includes(p.tld);
+        p.looksLikeBrand = /(paypall|paypal|amazon|micr0soft|goog1e)/i.test(hostname);
+        p.pathEntropy = u.pathname.length > 30;
+        return p;
+      }catch(e){return {host:'',isPunycode:false,hasHyphen:false,length:0,suspiciousTLD:false,looksLikeBrand:false,pathEntropy:false}};
+    }
+
+    function featureExtract(email){
+      const features = {};
+      features.numLinks = email.links.length;
+      features.numAttachments = email.attachments.length;
+      features.subjectUrgent = /urgent|verify|action required|alert/i.test(email.subject) ? 1:0;
+      features.fromDisplayMismatch = (()=>{
+        // crude check: display_name contains brand but from domain differs
+        const brandish = /(paypal|bank|support|alerts|hr|microsoft|amazon)/i;
+        return brandish.test(email.display_name) && !email.from.includes(email.display_name.replace(/[^a-zA-Z]/g,'').toLowerCase());
+      })();
+      features.spfFail = (email.headers.spf && email.headers.spf !== 'pass');
+      features.dkimFail = (email.headers.dkim && email.headers.dkim !== 'pass');
+      features.dmarcFail = (email.headers.dmarc && email.headers.dmarc !== 'pass');
+      features.suspiciousLinks = email.links.some(l=>{
+        const h = urlHeuristics(l);
+        return h.looksLikeBrand || h.isPunycode || h.suspiciousTLD || h.pathEntropy || h.hasHyphen && h.length>25;
+      });
+      features.macrosInAttachment = email.attachments.some(a=>/\.docm|\.xlsm|\.pptm/i.test(a));
+      return features;
+    }
+
+    function scoreEmail(email){
+      const f = featureExtract(email);
+      // rule engine: critical flags
+      const ruleFlags = [];
+      if(f.dkimFail) ruleFlags.push({type:'dkim',reason:'DKIM failed',impact:0.35});
+      if(f.spfFail) ruleFlags.push({type:'spf',reason:'SPF not pass',impact:0.25});
+      if(f.suspiciousLinks) ruleFlags.push({type:'url',reason:'Suspicious link detected',impact:0.30});
+      if(f.macrosInAttachment) ruleFlags.push({type:'attachment',reason:'Macro-enabled attachment',impact:0.28});
+
+      // lightweight heuristic ensemble (weights chosen for demo)
+      let base = 0.05; // baseline
+      base += f.subjectUrgent * 0.08;
+      base += f.numLinks * 0.05;
+      base += f.numAttachments * 0.03;
+      base += f.fromDisplayMismatch ? 0.12 : 0;
+      base += f.dkimFail ? 0.18 : 0;
+      base += f.spfFail ? 0.12 : 0;
+      base += f.suspiciousLinks ? 0.25 : 0;
+      base += f.macrosInAttachment ? 0.30 : 0;
+      if(base>1) base = Math.min(0.999, base);
+
+      // aggregate: if any critical rule with high impact, promote quarantine
+      const score = Number(base.toFixed(3));
+      const reasons = ruleFlags;
+      const action = score >= 0.9 || reasons.some(r=>r.impact>=0.30) ? 'quarantine' : (score >= 0.6 ? 'warning' : 'deliver');
+      return {score, reasons, action, features:f};
+    }
+
+    // -------------------- UI rendering --------------------
+    let EMAILS = [];
+    let currentEmailId = null;
+
+    function fetchEmails(){
+      // Replace this function to call your API that returns parsed emails.
+      // While in demo mode, we copy the mock dataset and compute scores.
+      EMAILS = MOCK_EMAILS.map(e=>{
+        const s = scoreEmail(e);
+        return {...e, score: s.score, reasons: s.reasons, action: s.action, features: s.features};
+      });
+      renderList();
+      logActivity('Fetched ' + EMAILS.length + ' messages');
+    }
+
+    function renderList(){
+      const container = document.getElementById('emailList');
+      container.innerHTML = '';
+      const qOnly = document.getElementById('showQuarantine').checked;
+      const wOnly = document.getElementById('showWarnings').checked;
+      const sortVal = document.getElementById('sortBy').value;
+      const q = document.getElementById('search').value.trim().toLowerCase();
+
+      let list = EMAILS.filter(e=>{
+        if(q && !(e.from.toLowerCase().includes(q) || e.subject.toLowerCase().includes(q) || e.links.join(' ').toLowerCase().includes(q))) return false;
+        if(qOnly && e.action!=='quarantine') return false;
+        if(wOnly && e.action!=='warning') return false;
+        return true;
+      });
+
+      if(sortVal==='score_desc') list.sort((a,b)=>b.score-a.score);
+      if(sortVal==='score_asc') list.sort((a,b)=>a.score-b.score);
+      if(sortVal==='time_desc') list.sort((a,b)=>new Date(b.date)-new Date(a.date));
+
+      list.forEach(email=>{
+        const el = document.createElement('div');
+        el.className = 'email-row';
+        el.style.display = 'flex'; el.style.justifyContent='space-between'; el.style.alignItems='center'; el.style.marginBottom='8px';
+        el.onclick = ()=>selectEmail(email.id);
+        const left = document.createElement('div');
+        left.innerHTML = `<div class='sender'>${email.display_name} <span style='color:var(--muted);font-weight:400'>(${email.from})</span></div><div class='subject'>${email.subject}</div>`;
+        const right = document.createElement('div');
+        const scoreColor = email.score>=0.9? 'var(--bad)': email.score>=0.6? 'orange':'var(--good)';
+        right.innerHTML = `<div style='display:flex;flex-direction:column;align-items:flex-end;gap:6px'><div class='score-bubble' style='background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.03);color:${scoreColor}'>${(email.score*100).toFixed(0)}%</div><div class='small'>${new Date(email.date).toLocaleString()}</div></div>`;
+        el.appendChild(left); el.appendChild(right);
+        container.appendChild(el);
+      });
+    }
+
+    function selectEmail(id){
+      currentEmailId = id;
+      const email = EMAILS.find(e=>e.id===id);
+      if(!email) return;
+      document.getElementById('detailTitle').innerText = `${email.subject} — ${email.display_name} (${email.from})`;
+      const scoreCard = document.getElementById('scoreCard');
+      scoreCard.innerHTML = '';
+
+      const s = document.createElement('div');
+      s.style.display='flex'; s.style.flexDirection='column'; s.style.gap='8px';
+      s.innerHTML = `<div style='display:flex;justify-content:space-between;align-items:center'><div><strong>Score</strong><div style='font-size:22px;font-weight:800'>${(email.score*100).toFixed(0)}%</div></div><div><span class='pill'>Action: ${email.action}</span></div></div>`;
+
+      const reasons = document.createElement('div');
+      reasons.innerHTML = `<div style='margin-top:8px'><strong>Reasons / Rule Flags</strong></div>`;
+      if(email.reasons.length===0) reasons.innerHTML += '<div class="small">No critical rule flags</div>';
+      email.reasons.forEach(r=>{
+        const row = document.createElement('div');
+        row.style.display='flex'; row.style.justifyContent='space-between'; row.style.marginTop='6px';
+        row.innerHTML = `<div>${r.type.toUpperCase()}: ${r.reason}</div><div class='small'>impact ${Math.round(r.impact*100)}%</div>`;
+        reasons.appendChild(row);
+      });
+
+      const feat = document.createElement('div');
+      feat.style.marginTop='10px';
+      feat.innerHTML = `<strong>Feature snapshot</strong><div class='small' style='margin-top:6px'><pre style='white-space:pre-wrap'>${JSON.stringify(email.features,null,2)}</pre></div>`;
+
+      const links = document.createElement('div');
+      links.style.marginTop='10px';
+      links.innerHTML = `<strong>Links</strong><div class='small'>${email.links.length? email.links.map(l=>`<div><a href='${l}' target='_blank' rel='noreferrer'>${l}</a></div>`).join('') : '<div>— no links —</div>'}</div>`;
+
+      const attachments = document.createElement('div');
+      attachments.style.marginTop='10px';
+      attachments.innerHTML = `<strong>Attachments</strong><div class='small'>${email.attachments.length? email.attachments.join(', ') : '— none —'}</div>`;
+
+      scoreCard.appendChild(s);
+      scoreCard.appendChild(reasons);
+      scoreCard.appendChild(feat);
+      scoreCard.appendChild(links);
+      scoreCard.appendChild(attachments);
+
+      document.getElementById('jsonOut').innerText = JSON.stringify(buildEvidence(email), null, 2);
+      logActivity('Selected ' + email.id + ' (' + email.subject + ')');
+    }
+
+    function buildEvidence(email){
+      return {
+        email_id: email.id,
+        score: email.score,
+        action: email.action,
+        reasons: email.reasons,
+        features: email.features,
+        from: email.from,
+        display_name: email.display_name,
+        subject: email.subject,
+        to: email.to,
+        date: email.date,
+        links: email.links,
+        attachments: email.attachments,
+        raw_mime: 's3://bucket/emails/' + email.id + '.eml' // example
+      };
+    }
+
+    function exportEvidenceCurrent(){
+      if(!currentEmailId) return alert('Select an email first');
+      const email = EMAILS.find(e=>e.id===currentEmailId);
+      const payload = buildEvidence(email);
+      // For demo: download as file
+      const blob = new Blob([JSON.stringify(payload,null,2)], {type:'application/json'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = email.id + '-evidence.json'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      logActivity('Exported evidence for ' + email.id);
+    }
+
+    function exportEvidence(id){
+      const email = EMAILS.find(e=>e.id===id);
+      if(!email) return null;
+      return buildEvidence(email);
+    }
+
+    function exportEvidenceToServer(id, endpoint){
+      // Example function to POST evidence to backend API
+      const payload = exportEvidence(id);
+      if(!payload) return Promise.reject('no email');
+      return fetch(endpoint, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(r=>r.json());
+    }
+
+    function quarantine(){
+      if(!currentEmailId) return alert('Select an email first');
+      const e = EMAILS.find(x=>x.id===currentEmailId); e.action = 'quarantine'; document.getElementById('jsonOut').innerText = JSON.stringify(buildEvidence(e),null,2); renderList(); logActivity('Quarantined ' + e.id);
+    }
+    function markSafe(){
+      if(!currentEmailId) return alert('Select an email first');
+      const e = EMAILS.find(x=>x.id===currentEmailId); e.action = 'deliver'; document.getElementById('jsonOut').innerText = JSON.stringify(buildEvidence(e),null,2); renderList(); logActivity('Marked safe ' + e.id);
+    }
+
+    function applyFilters(){ renderList(); }
+
+    function logActivity(text){
+      const el = document.getElementById('activityLog');
+      const now = new Date().toLocaleString();
+      el.innerHTML = `<div style='padding:6px 0;border-bottom:1px dashed rgba(255,255,255,0.02)'><strong>${now}</strong> — ${text}</div>` + el.innerHTML;
+    }
+
+    document.getElementById('refreshBtn').addEventListener('click', ()=>fetchEmails());
+
+    // Initial load
+    fetchEmails();
+  </script>
+</body>
+</html>
